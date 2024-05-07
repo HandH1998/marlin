@@ -133,28 +133,7 @@ void w4a8_mul(
   if (workspace.numel() < prob_n / 128 * max_par)
     AT_ERROR("workspace must be of size at least ", prob_n / 128 * max_par, ".");
   int dev = A.get_device();
-  int err;
-  if (s3.numel() == 0) {
-    err = w4a8_marlin_cuda(
-    A.data_ptr(),
-    B.data_ptr(),
-    C.data_ptr(),
-    D.data_ptr(),
-    s1.data_ptr(),
-    s2.data_ptr(),
-    nullptr,
-    prob_m, prob_n, prob_k,
-    workspace.data_ptr(),
-    groupsize,
-    dev,
-    at::cuda::getCurrentCUDAStream(dev),
-    thread_k,
-    thread_n,
-    sms,
-    max_par
-  );
-  } else {
-    err = w4a8_marlin_cuda(
+  int err = w4a8_marlin_cuda(
     A.data_ptr(),
     B.data_ptr(),
     C.data_ptr(),
@@ -172,7 +151,6 @@ void w4a8_mul(
     sms,
     max_par
   );
-  }
 
   if (err == ERR_PROB_SHAPE) {
     AT_ERROR(
