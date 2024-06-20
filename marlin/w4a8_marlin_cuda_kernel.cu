@@ -607,6 +607,9 @@ __global__ void Marlin(
   // Since multiple threadblocks may process parts of the same column slice, we finally have to globally reduce over
   // the results. As the striped partioning minimizes the number of such reductions and our outputs are usually rather
   // small, we perform this reduction serially in L2 cache.
+  // global_reduce works on INT32 elements, which are the results of INT8 GEMM.
+  // This is why we need another INT32 maxtrix `C` to reduce instead of the
+  // original half matrix `D`.
   auto global_reduce = [&] (bool first = false, bool last = false) {
     // We are very careful here to reduce directly in the output buffer to maximize L2 cache utilization in this step. 
     // To do this, we write out results in FP16 (but still reduce with FP32 compute).
@@ -828,7 +831,7 @@ __global__ void Marlin(
 // latency hiding. At the same time, we want relatively few warps to have many registers per warp and small tiles.
 const int THREADS = 256;
 const int STAGES = 4; // 4 pipeline stages fit into shared memory
-const int SHARED_MEM = 96 * 1024; // max shared memory on compute capability 8.6 (< 8.0)
+// const int SHARED_MEM = 96 * 1024; // max shared memory on compute capability 8.6 (< 8.0)
 
 #define CALL_IF(THREAD_M_BLOCKS, THREAD_N_BLOCKS, THREAD_K_BLOCKS, GROUP_BLOCKS) \
   else if ( \
@@ -838,11 +841,11 @@ const int SHARED_MEM = 96 * 1024; // max shared memory on compute capability 8.6
     cudaFuncSetAttribute( \
       Marlin<THREADS, THREAD_M_BLOCKS, THREAD_N_BLOCKS, THREAD_K_BLOCKS, STAGES, GROUP_BLOCKS>, \
       cudaFuncAttributeMaxDynamicSharedMemorySize, \
-      SHARED_MEM \
+      max_shared_mem \
     ); \
     Marlin< \
       THREADS, THREAD_M_BLOCKS, THREAD_N_BLOCKS, THREAD_K_BLOCKS, STAGES, GROUP_BLOCKS \
-    ><<<blocks, THREADS, SHARED_MEM, stream>>>( \
+    ><<<blocks, THREADS, max_shared_mem, stream>>>( \
       A_ptr, B_ptr, C_ptr, D_ptr, s1_ptr, s2_ptr, s3_ptr, \
       prob_m, prob_n, prob_k, \
       locks \
@@ -878,6 +881,10 @@ int w4a8_marlin_cuda(
 
   if (sms == -1)
     cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev);
+  int max_shared_mem = 0;
+  cudaDeviceGetAttribute(&max_shared_mem,
+                         cudaDevAttrMaxSharedMemoryPerBlockOptin, dev);
+
   if (thread_k == -1 || thread_n == -1) {
     if (prob_m <= 16) {
       // For small batchizes, better partioning is slightly more important than better compute utilization
